@@ -31,6 +31,7 @@ function markOutOfQuota(m, message) {
 const chat = document.getElementById("chat");
 const input = document.getElementById("msg");
 const micBtn = document.getElementById("mic-btn");
+const MIC_ICON = "\u{1F3A4}"; // 🎤
 // const input = document.getElementById("msg");
 // ===== 3. GEMINI BRAIN (auto-fallback) =====
 async function callGemini(p) {
@@ -141,7 +142,7 @@ micBtn.onclick = () => {
   }
 };
 rec.onend = () => {
-  micBtn.innerText = "️";
+  micBtn.innerText = MIC_ICON;
   const t = heard;
   heard = "";
   if (!t) return;
@@ -150,7 +151,7 @@ rec.onend = () => {
 };
 rec.onerror = () => {
   heard = "";
-  micBtn.innerText = "️";
+  micBtn.innerText = MIC_ICON;
 };
 // ===== 5. TEXT-TO-SPEECH (మాట్లాడటం) =====
 let voices = [];
