@@ -71,7 +71,10 @@ async function callGemini(p) {
         },
       );
       const data = await res.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      const text = data.candidates?.[0]?.content?.parts
+        ?.map((part) => part.text || "")
+        .join("")
+        .trim();
       if (!res.ok || !text) {
         if (res.status === 429) markOutOfQuota(m, data.error?.message);
         throw new Error(data.error?.message || m + ": empty response");
@@ -88,30 +91,65 @@ async function callGemini(p) {
   }
   throw lastErr;
 }
+let busy = false;
 async function askGemini(p) {
-  add("J.A.R.V.I.S: Thinking...", "ai");
+  if (busy) return;
+  busy = true;
+  setControlsDisabled(true);
+  speechSynthesis.cancel();
+  const bubble = add("J.A.R.V.I.S: Thinking...", "ai");
   try {
     const reply = await callGemini(p);
-    chat.lastChild.innerText = "J.A.R.V.I.S: " + reply;
+    bubble.innerText = "J.A.R.V.I.S: " + reply;
+    chat.scrollTop = chat.scrollHeight;
     speak(reply); // reply వచ్చి న వెంటనేVOICE
   } catch (e) {
-    chat.lastChild.innerText = "J.A.R.V.I.S: ERROR - " + e.message;
+    bubble.innerText = "J.A.R.V.I.S: ERROR - " + e.message;
+  } finally {
+    busy = false;
+    setControlsDisabled(false);
   }
+}
+function setControlsDisabled(disabled) {
+  document.getElementById("send").disabled = disabled;
+  micBtn.disabled = disabled;
 }
 // ===== 4. SPEECH RECOGNITION (వినడం) =====
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const rec = new SR();
 rec.lang = "en-US"; // Telugu కి'te-IN'
+rec.continuous = false;
+rec.interimResults = false;
+rec.maxAlternatives = 1;
+
+// Some browsers (e.g. Android Chrome) fire onresult repeatedly with growing partial
+// text, so keep only the latest transcript and send it once when listening ends.
+let heard = "";
 rec.onresult = (e) => {
-  const t = e.results[0][0].transcript;
+  const last = e.results[e.results.length - 1];
+  heard = last[0].transcript.trim();
+};
+micBtn.onclick = () => {
+  if (busy) return;
+  speechSynthesis.cancel(); // don't let the mic hear J.A.R.V.I.S speaking
+  heard = "";
+  try {
+    rec.start();
+    micBtn.innerText = "LISTENING...";
+  } catch {
+    // already listening
+  }
+};
+rec.onend = () => {
+  micBtn.innerText = "️";
+  const t = heard;
+  heard = "";
+  if (!t) return;
   add("YOU: " + t, "user");
   askGemini(t);
 };
-micBtn.onclick = () => {
-  rec.start();
-  micBtn.innerText = "LISTENING...";
-};
-rec.onend = () => {
+rec.onerror = () => {
+  heard = "";
   micBtn.innerText = "️";
 };
 // ===== 5. TEXT-TO-SPEECH (మాట్లాడటం) =====
@@ -122,7 +160,10 @@ function loadVoices() {
 loadVoices();
 speechSynthesis.onvoiceschanged = loadVoices;
 function speak(t) {
-  const u = new SpeechSynthesisUtterance(t);
+  speechSynthesis.cancel(); // replace any current speech instead of queueing
+  const clean = t.replace(/[*_#`>~]+/g, "").trim();
+  if (!clean) return;
+  const u = new SpeechSynthesisUtterance(clean);
 
   u.rate = 1.05;
   u.pitch = 0.85;
@@ -133,7 +174,7 @@ function speak(t) {
 // ===== 6. TEXT SEND BUTTON =====
 document.getElementById("send").onclick = () => {
   const t = input.value.trim();
-  if (!t) return;
+  if (!t || busy) return;
   add("YOU: " + t, "user");
   input.value = "";
   askGemini(t);
@@ -144,4 +185,5 @@ function add(t, w) {
   d.innerText = t;
   chat.appendChild(d);
   chat.scrollTop = chat.scrollHeight;
+  return d;
 }
