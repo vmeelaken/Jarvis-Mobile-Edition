@@ -1314,3 +1314,10 @@ window.addEventListener('load', () => {
   initOrbs();
   setJarvisVisualState('IDLE');
 });
+
+// Required for the browser to offer "Install app" (PWA); only works over https or localhost.
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(error => console.warn('Service worker registration failed:', error));
+  });
+}
