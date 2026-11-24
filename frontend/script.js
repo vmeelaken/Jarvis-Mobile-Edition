@@ -1,6 +1,8 @@
 // ===== 1. API KEY =====
+// If config.js sets a Cloudflare Worker URL, requests go through it and no key is needed.
+const GEMINI_PROXY_URL = String(window.JARVIS_CONFIG?.proxyUrl || '').trim();
 let API_KEY = localStorage.getItem('jarvis_key');
-if (!API_KEY) {
+if (!API_KEY && !GEMINI_PROXY_URL) {
   API_KEY = prompt('Enter your Gemini API Key:');
   if (API_KEY) localStorage.setItem('jarvis_key', API_KEY);
 }
@@ -37,7 +39,7 @@ function markOutOfQuota(model, message) {
 // Tries the last working model first, then falls back to the next one on any
 // failure or timeout, so a healthy model costs a single call per question.
 async function requestGeminiInteraction(input, systemInstruction = GEMINI_SYSTEM_INSTRUCTION) {
-  if (!API_KEY) throw new Error('Gemini API key is missing. Reload the page and enter it again.');
+  if (!GEMINI_PROXY_URL && !API_KEY) throw new Error('Gemini API key is missing. Reload the page and enter it again.');
   const last = localStorage.getItem(LAST_MODEL_KEY);
   const order = (last ? [last, ...GEMINI_MODELS.filter(m => m !== last)] : GEMINI_MODELS).filter(m => !isOutOfQuota(m));
   if (!order.length) throw new Error('Daily free-tier quota is used up on all models. Try again later or use a key with billing enabled.');
@@ -49,21 +51,22 @@ async function requestGeminiInteraction(input, systemInstruction = GEMINI_SYSTEM
     try {
       const payload = { model, input, store: false };
       if (systemInstruction) payload.system_instruction = systemInstruction;
-      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+      const headers = { 'Content-Type': 'application/json' };
+      if (!GEMINI_PROXY_URL) headers['x-goog-api-key'] = API_KEY;
+      const response = await fetch(GEMINI_PROXY_URL || 'https://generativelanguage.googleapis.com/v1beta/interactions', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': API_KEY
-        },
+        headers,
         signal: controller.signal,
         body: JSON.stringify(payload)
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data?.error) {
         const message = data?.error?.message || 'Gemini request failed (' + response.status + ').';
-        if (response.status === 429) markOutOfQuota(model, message);
+        // The Worker's own per-IP rate limit is not a model quota, so don't blame the model.
+        const rateLimited = data?.error?.code === 'rate_limited';
+        if (response.status === 429 && !rateLimited) markOutOfQuota(model, message);
         const error = new Error(message);
-        error.fatal = response.status === 401 || response.status === 403 || /api key/i.test(message);
+        error.fatal = rateLimited || response.status === 401 || response.status === 403 || /api key/i.test(message);
         throw error;
       }
       const reply = extractInteractionText(data);
